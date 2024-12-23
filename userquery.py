@@ -1,104 +1,72 @@
-import re
+import nltk
+nltk.download('vader_lexicon')
+
 import tweepy
-from textblob import TextBlob
+from nltk.sentiment import SentimentIntensityAnalyzer
+import re
 
-class TwitterClient:
-    '''
-    Generic Twitter Class for sentiment analysis using Twitter API v2.
-    '''
-    def __init__(self):
-        '''
-        Class constructor or initialization method.
-        '''
-        # Replace with your own Bearer Token from the Twitter Developer Portal
-        bearer_token = "AAAAAAAAAAAAAAAAAAAAAFB6xQEAAAAAXYAyULRCLP9B7b2E3KVHugNwTok%3D0qFNUCjObuoHMpsDkvt3ipykIBE1hEdJki3GOazg4zl1wdolet"
+# Twitter API credentials
+API_KEY = 'dPZhGZGkZmC8M9P3PZO7XbS64'
+API_SECRET = 'uCJ0TkAIXJJl3oPZhsL0pkY9pEuE06SRw0ba1jUjOz55WX7oNH'
+ACCESS_TOKEN = '1864598798741458944-DiNcvy7vdu2QJzRdLX44gsWJVf9uTa'
+ACCESS_TOKEN_SECRET = 'NR2m5qpQWc0SJjuo2mNXx2OXb0GYIEaturbPlQXN0jDCp'
+BEARER_TOKEN = 'AAAAAAAAAAAAAAAAAAAAAFB6xQEAAAAAuPWeSsktLh3HkdEzJESGQ12l1Hg%3DF6prE7UXBCB7zhV8LMjDuugOUI6xEfdguwvsu3RSuQzF9n1aiU'
 
-        try:
-            self.client = tweepy.Client(bearer_token=bearer_token)
-        except tweepy.errors.TweepyException as e:
-            print(f"Error: Authentication Failed - {str(e)}")
+# Authenticate with Twitter API
+def authenticate_twitter():
+    auth = tweepy.OAuth1UserHandler(API_KEY, API_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET)
+    api = tweepy.API(auth, wait_on_rate_limit=True)
+    return api
 
-    def clean_tweet(self, tweet):
-        '''
-        Utility function to clean tweet text by removing links, special characters
-        using simple regex statements.
-        '''
-        return ' '.join(re.sub(r"(@\w+)|([^0-9A-Za-z \t])|(\w+:\/\/\S+)", " ", tweet).split())
+# Clean tweets by removing URLs, mentions, hashtags, and special characters
+def clean_tweet(tweet):
+    tweet = re.sub(r"http\S+", "", tweet)  # Remove URLs
+    tweet = re.sub(r"@\S+", "", tweet)    # Remove mentions
+    tweet = re.sub(r"#\S+", "", tweet)    # Remove hashtags
+    tweet = re.sub(r"[^A-Za-z0-9\s]", "", tweet)  # Remove special characters
+    return tweet
 
-    def get_tweet_sentiment(self, tweet):
-        '''
-        Utility function to classify sentiment of passed tweet
-        using textblob's sentiment method
-        '''
-        analysis = TextBlob(self.clean_tweet(tweet))
-        if analysis.sentiment.polarity > 0:
-            return 'positive'
-        elif analysis.sentiment.polarity == 0:
-            return 'neutral'
+# Analyze sentiment of tweets
+def analyze_sentiment(api, query, max_tweets=100):
+    tweets = tweepy.Cursor(api.search_tweets, q=query, lang="en").items(max_tweets)
+    sia = SentimentIntensityAnalyzer()
+    
+    sentiments = {'positive': 0, 'neutral': 0, 'negative': 0}
+    total_tweets = 0
+
+    for tweet in tweets:
+        total_tweets += 1
+        cleaned_tweet = clean_tweet(tweet.text)
+        sentiment_score = sia.polarity_scores(cleaned_tweet)
+
+        if sentiment_score['compound'] > 0.05:
+            sentiments['positive'] += 1
+        elif sentiment_score['compound'] < -0.05:
+            sentiments['negative'] += 1
         else:
-            return 'negative'
-
-    def get_tweets(self, query, count=10):
-        '''
-        Main function to fetch tweets and parse them using Twitter API v2.
-        '''
-        tweets = []
-
-        try:
-            response = self.client.search_recent_tweets(
-                query=query, max_results=min(count, 100), tweet_fields=['text']
-            )
-
-            if not response.data:
-                print("No tweets found for the query.")
-                return tweets
-
-            for tweet in response.data:
-                parsed_tweet = {
-                    'text': tweet.text,
-                    'sentiment': self.get_tweet_sentiment(tweet.text)
-                }
-                tweets.append(parsed_tweet)
-
-            return tweets
-
-        except tweepy.errors.TweepyException as e:
-            print(f"Error: {str(e)}")
-            return []
-
-def main():
-    # Create an object of the TwitterClient class
-    api = TwitterClient()
-
-    # Take query input from the user
-    query = input("Enter the keyword or hashtag to search for: ")
-
-    # Fetch tweets
-    tweets = api.get_tweets(query=query, count=1000)
-
-    if not tweets:
-        print("No tweets fetched. Please check your query or API limits.")
-        return
-
-    # Classify tweets by sentiment
-    ptweets = [tweet for tweet in tweets if tweet['sentiment'] == 'positive']
-    ntweets = [tweet for tweet in tweets if tweet['sentiment'] == 'negative']
+            sentiments['neutral'] += 1
 
     # Calculate percentages
-    print("Positive tweets percentage: {} %".format(100 * len(ptweets) / len(tweets)))
-    print("Negative tweets percentage: {} %".format(100 * len(ntweets) / len(tweets)))
-    print("Neutral tweets percentage: {} %".format(
-        100 * (len(tweets) - len(ptweets) - len(ntweets)) / len(tweets)
-    ))
+    for sentiment in sentiments:
+        sentiments[sentiment] = round((sentiments[sentiment] / total_tweets) * 100, 2) if total_tweets > 0 else 0
+    
+    return sentiments
 
-    # Display some tweets
-    print("\n\nPositive tweets:")
-    for tweet in ptweets[:5]:
-        print(tweet['text'])
-
-    print("\n\nNegative tweets:")
-    for tweet in ntweets[:5]:
-        print(tweet['text'])
+# Main function
+def main():
+    api = authenticate_twitter()
+    query = input("Enter a query (word/phrase): ")
+    print("Fetching tweets...")
+    
+    try:
+        sentiment_percentages = analyze_sentiment(api, query)
+        print(f"Sentiment Analysis for '{query}':")
+        print(f"Positive: {sentiment_percentages['positive']}%")
+        print(f"Neutral: {sentiment_percentages['neutral']}%")
+        print(f"Negative: {sentiment_percentages['negative']}%")
+    except Exception as e:
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
     main()
+
